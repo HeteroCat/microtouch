@@ -12,15 +12,23 @@ export default function Home() {
 
       {/* 主内容区域 */}
       <main className="relative flex flex-col items-center justify-center min-h-screen px-4">
-        {/* Orb 背景效果 */}
-        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-          <div className="w-[600px] h-[600px] opacity-80">
-            <Orb hue={220} hoverIntensity={0.3} rotateOnHover={true} forceHoverState={true} />
+        {/* Orb 背景效果 - 绝对定位居中 */}
+        <div
+          className="absolute inset-0 flex items-center justify-center"
+          style={{ zIndex: 0 }}
+        >
+          <div style={{ width: '700px', height: '700px' }}>
+            <Orb
+              hoverIntensity={2}
+              rotateOnHover={true}
+              hue={0}
+              forceHoverState={false}
+            />
           </div>
         </div>
 
-        {/* 内容层 */}
-        <div className="relative z-10 flex flex-col items-center text-center">
+        {/* 内容层 - 文字透过鼠标事件，让 Orb 可以接收 hover */}
+        <div className="relative z-10 flex flex-col items-center text-center pointer-events-none">
           {/* New AI Agent 标签 */}
           <div className="flex items-center gap-2 mb-8">
             <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
@@ -36,8 +44,8 @@ export default function Home() {
             It Transforms!
           </h1>
 
-          {/* 按钮组 */}
-          <div className="flex items-center gap-4 mt-12">
+          {/* 按钮组 - 保持可点击 */}
+          <div className="flex items-center gap-4 mt-12 pointer-events-auto">
             <Link
               href="/home"
               className="px-8 py-3 bg-white text-black font-medium rounded-full hover:bg-gray-100 transition-colors"

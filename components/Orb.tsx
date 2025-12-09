@@ -1,5 +1,3 @@
-'use client';
-
 import { useEffect, useRef } from 'react';
 import { Renderer, Program, Mesh, Triangle, Vec3 } from 'ogl';
 
@@ -157,7 +155,7 @@ export default function Orb({
     vec4 mainImage(vec2 fragCoord) {
       vec2 center = iResolution.xy * 0.5;
       float size = min(iResolution.x, iResolution.y);
-      vec2 uv = (fragCoord - center) / size * 3.0;
+      vec2 uv = (fragCoord - center) / size * 2.0;
       
       float angle = rot;
       float s = sin(angle);
@@ -234,7 +232,8 @@ export default function Orb({
       const uvX = ((x - centerX) / size) * 2.0;
       const uvY = ((y - centerY) / size) * 2.0;
 
-      if (Math.sqrt(uvX * uvX + uvY * uvY) < 0.8) {
+      // hover 检测区域：从圆心(0)到边缘(1.0)整个范围都触发变形效果
+      if (Math.sqrt(uvX * uvX + uvY * uvY) < 1.0) {
         targetHover = 1;
       } else {
         targetHover = 0;
@@ -245,9 +244,8 @@ export default function Orb({
       targetHover = 0;
     };
 
-    window.addEventListener('mousemove', handleMouseMove);
-    // Handle mouse leaving the window
-    window.addEventListener('mouseleave', handleMouseLeave);
+    container.addEventListener('mousemove', handleMouseMove);
+    container.addEventListener('mouseleave', handleMouseLeave);
 
     let rafId: number;
     const update = (t: number) => {
@@ -273,11 +271,9 @@ export default function Orb({
     return () => {
       cancelAnimationFrame(rafId);
       window.removeEventListener('resize', resize);
-      window.removeEventListener('mousemove', handleMouseMove);
-      window.removeEventListener('mouseleave', handleMouseLeave);
-      if (container.contains(gl.canvas)) {
-        container.removeChild(gl.canvas);
-      }
+      container.removeEventListener('mousemove', handleMouseMove);
+      container.removeEventListener('mouseleave', handleMouseLeave);
+      container.removeChild(gl.canvas);
       gl.getExtension('WEBGL_lose_context')?.loseContext();
     };
   }, [hue, hoverIntensity, rotateOnHover, forceHoverState]);
