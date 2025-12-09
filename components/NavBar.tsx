@@ -23,8 +23,11 @@ export default function NavBar() {
                 </div>
 
                 <div className="flex items-center gap-8 text-sm font-medium text-gray-300">
-                    <Link href="#" className="hover:text-white transition-colors">
+                    <Link href="/" className="hover:text-white transition-colors">
                         Home
+                    </Link>
+                    <Link href="/product" className="hover:text-white transition-colors">
+                        Product
                     </Link>
                     <Link href="#" className="hover:text-white transition-colors">
                         Docs

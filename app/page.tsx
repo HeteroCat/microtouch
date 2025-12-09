@@ -47,7 +47,7 @@ export default function Home() {
           {/* 按钮组 - 保持可点击 */}
           <div className="flex items-center gap-4 mt-12 pointer-events-auto">
             <Link
-              href="/home"
+              href="/product"
               className="px-8 py-3 bg-white text-black font-medium rounded-full hover:bg-gray-100 transition-colors"
             >
               Get Started
