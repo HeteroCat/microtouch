@@ -10,7 +10,7 @@
  * - 点击文章查看 Markdown 内容
  */
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import NavBar from '@/components/NavBar';
 import {
     Sparkles,
@@ -24,10 +24,15 @@ import {
     XCircle,
     X,
     User,
-    Menu // 用于列表图标
+    Menu, // 用于列表图标
+    Download, // 用于下载图标
+    CheckSquare, // 用于全选图标
+    Square // 用于未选中图标
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import JSZip from 'jszip';
+import { saveAs } from 'file-saver';
 
 /**
  * 获取代理后的图片 URL
@@ -84,8 +89,38 @@ export default function WeChatOfficialSearchPage() {
     const [keywordQuery, setKeywordQuery] = useState('');
     const [isKeywordSearch, setIsKeywordSearch] = useState(false);
 
+    // 文章选择与下载状态
+    const [selectedArticles, setSelectedArticles] = useState<Set<string>>(new Set());
+    const [isDownloading, setIsDownloading] = useState(false);
+
     // 视图状态
     const [viewState, setViewState] = useState<ViewState>('search');
+
+    // 初始化：从 localStorage 恢复选中状态
+    useEffect(() => {
+        try {
+            const saved = localStorage.getItem('wechat_selected_articles');
+            if (saved) {
+                const parsed = JSON.parse(saved);
+                if (Array.isArray(parsed)) {
+                    setSelectedArticles(new Set(parsed));
+                }
+            }
+        } catch (e) {
+            console.error('Failed to load selected articles:', e);
+        }
+    }, []);
+
+    // 监听选中状态变化并同步到 localStorage
+    useEffect(() => {
+        try {
+            localStorage.setItem('wechat_selected_articles', JSON.stringify(Array.from(selectedArticles)));
+            // 同时保存数量，方便其他页面快速读取
+            localStorage.setItem('wechat_selected_count', selectedArticles.size.toString());
+        } catch (e) {
+            console.error('Failed to save selected articles:', e);
+        }
+    }, [selectedArticles]);
 
     // 搜索公众号
     const handleSearch = async () => {
@@ -109,6 +144,7 @@ export default function WeChatOfficialSearchPage() {
     };
 
     // 获取公众号文章列表
+    // 获取公众号文章列表
     const handleAccountClick = async (account: Account) => {
         setSelectedAccount(account);
         setViewState('articles');
@@ -117,13 +153,46 @@ export default function WeChatOfficialSearchPage() {
         setKeywordQuery('');
 
         try {
+            // 先获取第一页 (20条) 以保证快速响应和兼容性
+            const BATCH_SIZE = 20;
             const res = await fetch(
-                `/api/wechat/articles?nickname=${encodeURIComponent(account.name)}&count=20`
+                `/api/wechat/articles?nickname=${encodeURIComponent(account.name)}&count=${BATCH_SIZE}`
             );
+
             if (res.ok) {
                 const data = await res.json();
-                setArticles(data.data || []);
-                setArticlesTotal(data.total || 0);
+                let allArticles = data.data || [];
+                const total = data.total || 0;
+
+                // 立即显示第一页内容
+                setArticles(allArticles);
+                setArticlesTotal(total);
+
+                // 如果还有更多文章，尝试并发获取剩余部分 (上限取 100 条防止请求过多)
+                // 用户反馈需要全选 50+ 文章，因此自动加载是必须的
+                if (total > allArticles.length) {
+                    const fetchLimit = 100;
+                    const remainingTasks = [];
+
+                    for (let offset = BATCH_SIZE; offset < Math.min(total, fetchLimit); offset += BATCH_SIZE) {
+                        remainingTasks.push(
+                            fetch(`/api/wechat/articles?nickname=${encodeURIComponent(account.name)}&count=${BATCH_SIZE}&offset=${offset}`)
+                                .then(r => r.ok ? r.json() : { data: [] })
+                                .then(d => d.data || [])
+                                .catch(() => [])
+                        );
+                    }
+
+                    // 并发执行剩余请求
+                    if (remainingTasks.length > 0) {
+                        const results = await Promise.all(remainingTasks);
+                        results.forEach(batch => {
+                            allArticles = [...allArticles, ...batch];
+                        });
+                        // 更新完整的文章列表
+                        setArticles(allArticles);
+                    }
+                }
             } else {
                 console.error('Failed to fetch articles');
             }
@@ -156,6 +225,75 @@ export default function WeChatOfficialSearchPage() {
             console.error('Keyword search error', error);
         } finally {
             setIsLoadingArticles(false);
+        }
+    };
+
+    // 切换文章选中状态
+    const handleToggleSelect = (article: Article, e: React.MouseEvent) => {
+        e.stopPropagation();
+        const newSelected = new Set(selectedArticles);
+        if (newSelected.has(article.link)) {
+            newSelected.delete(article.link);
+        } else {
+            newSelected.add(article.link);
+        }
+        setSelectedArticles(newSelected);
+    };
+
+    // 全选/取消全选
+    const handleSelectAll = () => {
+        if (selectedArticles.size === articles.length) {
+            setSelectedArticles(new Set());
+        } else {
+            const newSelected = new Set(articles.map(a => a.link));
+            setSelectedArticles(newSelected);
+        }
+    };
+
+    // 批量下载选中文章
+    // Fixes:
+    // - [x] Update the UI to show selection mode and download button
+    // - [ ] Verify the functionality
+    //     - [x] Fix checkbox positioning (add relative)
+    //     - [x] Increase article fetch count (20 -> 100)
+    const handleDownloadSelected = async () => {
+        if (selectedArticles.size === 0) return;
+
+        setIsDownloading(true);
+        const zip = new JSZip();
+
+        try {
+            // 获取选中的文章对象
+            const selectedArticlesList = articles.filter(a => selectedArticles.has(a.link));
+
+            // 并发获取文章内容
+            const promises = selectedArticlesList.map(async (article) => {
+                try {
+                    const res = await fetch(`/api/wechat/extract?url=${encodeURIComponent(article.link)}`);
+                    if (res.ok) {
+                        const data = await res.json();
+                        // 使用文章标题作为文件名，移除非法字符
+                        const fileName = `${article.title.replace(/[\\/:*?"<>|]/g, '_')}.md`;
+                        zip.file(fileName, data.content || '无法获取内容');
+                    } else {
+                        zip.file(`${article.title}_error.txt`, '获取内容失败');
+                    }
+                } catch (error) {
+                    zip.file(`${article.title}_error.txt`, `发生错误: ${error}`);
+                }
+            });
+
+            await Promise.all(promises);
+
+            // 生成并下载 ZIP
+            const content = await zip.generateAsync({ type: 'blob' });
+            saveAs(content, `微信文章_${selectedAccount?.name || 'download'}_${new Date().toISOString().slice(0, 10)}.zip`);
+
+        } catch (error) {
+            console.error('Download error', error);
+            alert('下载过程中发生错误');
+        } finally {
+            setIsDownloading(false);
         }
     };
 
@@ -451,7 +589,46 @@ export default function WeChatOfficialSearchPage() {
                             >
                                 搜索
                             </button>
+
+                            {/* 批量下载按钮 */}
+                            <button
+                                onClick={handleDownloadSelected}
+                                disabled={isDownloading || selectedArticles.size === 0}
+                                className={`flex items-center gap-2 px-6 py-3 rounded-lg font-medium transition-all ${selectedArticles.size > 0
+                                    ? 'bg-blue-600 text-white hover:bg-blue-500 shadow-lg shadow-blue-500/20'
+                                    : 'bg-slate-800 text-slate-500 cursor-not-allowed'
+                                    }`}
+                            >
+                                {isDownloading ? (
+                                    <Loader2 className="w-5 h-5 animate-spin" />
+                                ) : (
+                                    <Download className="w-5 h-5" />
+                                )}
+                                {isDownloading ? '打包中...' : `下载 (${selectedArticles.size})`}
+                            </button>
                         </div>
+
+                        {/* 全选控制栏 (当有文章时显示) */}
+                        {articles.length > 0 && (
+                            <div className="flex items-center justify-end mb-2 px-1">
+                                <button
+                                    onClick={handleSelectAll}
+                                    className="flex items-center gap-2 text-sm text-gray-400 hover:text-white transition-colors"
+                                >
+                                    {selectedArticles.size === articles.length ? (
+                                        <>
+                                            <CheckSquare className="w-4 h-4 text-blue-500" />
+                                            取消全选
+                                        </>
+                                    ) : (
+                                        <>
+                                            <Square className="w-4 h-4" />
+                                            全选
+                                        </>
+                                    )}
+                                </button>
+                            </div>
+                        )}
 
                         {/* 搜索状态提示 */}
                         {isKeywordSearch && (
@@ -489,7 +666,7 @@ export default function WeChatOfficialSearchPage() {
                                     <div
                                         key={index}
                                         onClick={() => handleArticleClick(article)}
-                                        className="bg-slate-900/50 border border-slate-800 rounded-xl p-5 flex gap-4 hover:border-purple-500/50 hover:bg-slate-900/80 transition-all cursor-pointer group"
+                                        className="bg-slate-900/50 border border-slate-800 rounded-xl p-5 flex gap-4 hover:border-purple-500/50 hover:bg-slate-900/80 transition-all cursor-pointer group relative"
                                     >
                                         {article.cover ? (
                                             <div className="relative flex-shrink-0">
@@ -511,6 +688,22 @@ export default function WeChatOfficialSearchPage() {
                                                 <FileText className="w-8 h-8 text-slate-500" />
                                             </div>
                                         )}
+
+                                        {/* 文章选择复选框 */}
+                                        <div
+                                            className="absolute top-2 left-2 z-10"
+                                            onClick={(e) => e.stopPropagation()}
+                                        >
+                                            <button
+                                                onClick={(e) => handleToggleSelect(article, e)}
+                                                className={`w-6 h-6 rounded flex items-center justify-center transition-all ${selectedArticles.has(article.link)
+                                                    ? 'bg-blue-600 text-white shadow-lg'
+                                                    : 'bg-slate-900/80 text-gray-400 border border-slate-700 hover:border-slate-500'
+                                                    }`}
+                                            >
+                                                {selectedArticles.has(article.link) && <CheckCircle2 className="w-4 h-4" />}
+                                            </button>
+                                        </div>
                                         <div className="flex-1 min-w-0">
                                             <h3
                                                 className="text-white font-medium mb-2 line-clamp-2 group-hover:text-purple-300 transition-colors [&>em]:not-italic [&>em]:text-purple-400 [&>em]:font-bold"

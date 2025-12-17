@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import NavBar from '@/components/NavBar';
 import TiltedCard from '@/components/TiltedCard';
@@ -16,6 +16,7 @@ interface Tool {
     date: string;
     isActive: boolean;
     link?: string;
+    badgeCount?: number;
 }
 
 // 移除自定义SVG组件，改为使用 lucide-react
@@ -43,10 +44,15 @@ function ToolCard({ tool, onToggle }: { tool: Tool; onToggle: (id: string) => vo
                 <div className="relative h-full bg-slate-900 border border-slate-800 rounded-2xl p-5 flex flex-col">
                     {/* 图标和开关 */}
                     <div className="flex items-start justify-between mb-4" style={{ transform: "translateZ(20px)" }}>
-                        <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${tool.iconBgColor}`}>
+                        <div className={`relative w-12 h-12 rounded-xl flex items-center justify-center ${tool.iconBgColor}`}>
                             <div className="text-white">
                                 {tool.icon}
                             </div>
+                            {tool.badgeCount !== undefined && tool.badgeCount > 0 && (
+                                <div className="absolute -top-2 -right-2 w-6 h-6 bg-red-500 rounded-full flex items-center justify-center border-2 border-slate-900 shadow-lg animate-in zoom-in duration-300">
+                                    <span className="text-white text-xs font-bold">{tool.badgeCount}</span>
+                                </div>
+                            )}
                         </div>
                         <button
                             onClick={(e) => {
@@ -144,6 +150,46 @@ export default function ProductPage() {
             tool.id === id ? { ...tool, isActive: !tool.isActive } : tool
         ));
     };
+
+    // 监听 localStorage 中的选中文章数量
+    useEffect(() => {
+        // 读取数量的函数
+        const updateCount = () => {
+            try {
+                const countStr = localStorage.getItem('wechat_selected_count');
+                const count = countStr ? parseInt(countStr, 10) : 0;
+
+                setTools(prevTools => prevTools.map(tool => {
+                    if (tool.id === 'wechat-official') {
+                        // 只有当数量变化时才更新，避免不必要的重渲染
+                        if (tool.badgeCount !== count) {
+                            return { ...tool, badgeCount: count };
+                        }
+                    }
+                    return tool;
+                }));
+            } catch (e) {
+                console.error('Failed to read badge count:', e);
+            }
+        };
+
+        // 初始读取
+        updateCount();
+
+        // 监听 storage 事件（跨标签页同步）
+        window.addEventListener('storage', updateCount);
+
+        // 也可以设置一个定时器或者在页面获得焦点时检查，以防同页面的快速跳转
+        // 由于这里是单页面应用，从 wechat 页面返回时实际上是组件重新挂载，
+        // 这里的 useEffect 初始读取应该足够。
+        // 为了保险起见，可以在 focus 时也检查一下
+        window.addEventListener('focus', updateCount);
+
+        return () => {
+            window.removeEventListener('storage', updateCount);
+            window.removeEventListener('focus', updateCount);
+        };
+    }, []);
 
     return (
         <div className="min-h-screen bg-black">
