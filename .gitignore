@@ -65,3 +65,7 @@ Desktop.ini
 
 # Optional: Ignore specific user files
 *.qoder
+
+# Local Data
+/data/*.json
+!/data/.gitkeep
