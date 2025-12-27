@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import NavBar from '@/components/NavBar';
 import TiltedCard from '@/components/TiltedCard';
+import Antigravity from '@/components/Antigravity';
 import { BookOpen, MessageCircle, Image, Plus, Sparkles, Bell, Database, Settings, Link, Loader2, Info, Trash2 } from 'lucide-react';
 
 // 工具数据接口
@@ -397,12 +398,25 @@ export default function ProductPage() {
     }, []);
 
     return (
-        <div className="min-h-screen bg-black">
+        <div className="min-h-screen bg-black relative overflow-hidden">
+            {/* 动态背景 */}
+            <div className="absolute inset-0 z-0 pointer-events-none opacity-40">
+                <Antigravity
+                    color="#6366f1"
+                    count={400}
+                    particleSize={1.5}
+                    magnetRadius={15}
+                    autoAnimate={true}
+                />
+            </div>
+
             {/* 导航栏 */}
-            <NavBar />
+            <div className="relative z-50">
+                <NavBar />
+            </div>
 
             {/* 主内容区域 */}
-            <main className="pt-32 px-8 pb-16 max-w-7xl mx-auto">
+            <main className="relative z-10 pt-32 px-8 pb-16 max-w-7xl mx-auto">
                 {/* 搜索输入框 */}
                 <div className="flex items-center justify-center gap-4 mb-12">
                     <div className="relative group flex items-center w-full max-w-2xl">
