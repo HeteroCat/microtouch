@@ -1,5 +1,5 @@
 'use client';
-import React, { useRef, useState } from "react";
+import React, { useRef } from "react";
 import { motion, useMotionValue, useSpring, useTransform } from "framer-motion";
 
 interface TiltedCardProps {
@@ -20,11 +20,14 @@ export default function TiltedCard({
     const x = useMotionValue(0);
     const y = useMotionValue(0);
 
-    const mouseX = useSpring(x, { stiffness: 300, damping: 30 });
-    const mouseY = useSpring(y, { stiffness: 300, damping: 30 });
+    // 更丝滑的弹簧参数：降低刚度、增加阻尼、增加质量感
+    const springConfig = { stiffness: 150, damping: 20, mass: 0.5 };
+    const mouseX = useSpring(x, springConfig);
+    const mouseY = useSpring(y, springConfig);
 
-    const rotateX = useTransform(mouseY, [-0.5, 0.5], ["15deg", "-15deg"]);
-    const rotateY = useTransform(mouseX, [-0.5, 0.5], ["-15deg", "15deg"]);
+    // 减小倾斜角度，让效果更微妙自然
+    const rotateX = useTransform(mouseY, [-0.5, 0.5], ["8deg", "-8deg"]);
+    const rotateY = useTransform(mouseX, [-0.5, 0.5], ["-8deg", "8deg"]);
 
     const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
         if (!ref.current) return;
@@ -56,7 +59,7 @@ export default function TiltedCard({
             onMouseLeave={handleMouseLeave}
             onClick={onClick}
             style={{
-                perspective: 1000,
+                perspective: 800,
             }}
             className={containerClassName}
         >
@@ -65,7 +68,9 @@ export default function TiltedCard({
                     rotateX,
                     rotateY,
                     transformStyle: "preserve-3d",
+                    willChange: "transform",
                 }}
+                transition={{ type: "spring", stiffness: 150, damping: 20 }}
                 className={className}
             >
                 {children}
@@ -73,3 +78,4 @@ export default function TiltedCard({
         </motion.div>
     );
 }
+
