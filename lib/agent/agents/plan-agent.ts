@@ -1,0 +1,260 @@
+/**
+ * PlanAgent - 规划智能体
+ * 负责：
+ * - 分析用户意图
+ * - 检查数据源配置
+ * - 制定执行计划
+ * - 推断报告类型
+ */
+
+import { Agent } from '../core/agent';
+import { HelloAgentsLLM } from '../core/llm';
+import { AgentConfig, Plan } from '../core/types';
+import { ToolRegistry } from '../tools/registry';
+
+interface SourceConfig {
+  id: string;
+  type: 'wechat' | 'knowledge' | 'rss';
+  name: string;
+  enabled: boolean;
+}
+
+export class PlanAgent extends Agent {
+  constructor(
+    private checkUserConfigs: (userId: string) => Promise<SourceConfig[]>
+  ) {
+    const systemPrompt = `你是一个专业的任务规划助手。
+
+你的职责：
+1. 分析用户查询意图
+2. 检查用户的数据源配置
+3. 制定最优执行计划
+4. 确定报告类型
+
+规划原则：
+- 有配置数据源时，优先分析配置内容
+- 无配置时，进行跨源搜索
+- 根据查询复杂度选择报告类型
+- 确保计划可行且高效`;
+
+    const llm = new HelloAgentsLLM();
+    super('规划助手', llm, { systemPrompt });
+  }
+
+  /**
+   * 制定计划
+   */
+  async makePlan(userQuery: string, userId: string, preferredReportType?: 'deep-research' | 'daily-brief' | 'formal'): Promise<Plan> {
+    console.log(`[PlanAgent] 分析用户意图...`);
+    console.log(`  查询: ${userQuery}`);
+    console.log(`  用户: ${userId}`);
+    if (preferredReportType) {
+      console.log(`  用户指定类型: ${preferredReportType}`);
+    }
+
+    // 1. 检查用户配置
+    const configuredSources = await this.checkUserConfigs(userId);
+    const hasConfig = configuredSources.length > 0;
+
+    console.log(`  配置数据源: ${hasConfig ? configuredSources.length + ' 个' : '无'}`);
+    if (hasConfig) {
+      configuredSources.forEach(s => console.log(`    - ${s.name} (${s.type})`));
+    }
+
+    // 2. 分析意图
+    const intentAnalysis = await this.analyzeIntent(userQuery, hasConfig, configuredSources);
+
+    // 3. 确定报告类型（优先使用用户指定，否则自动推断）
+    let reportType: 'deep-research' | 'daily-brief';
+    if (preferredReportType) {
+      // 将 formal 映射为 daily-brief（如果后端不区分正式和简报）
+      reportType = preferredReportType === 'formal' ? 'daily-brief' : preferredReportType;
+    } else {
+      reportType = this.inferReportType(userQuery, intentAnalysis);
+    }
+
+    // 4. 生成计划
+    const plan = this.generatePlan(userQuery, hasConfig, configuredSources, reportType);
+
+    console.log(`\n[PlanAgent] 计划生成完成:`);
+    console.log(`  模式: ${plan.mode}`);
+    console.log(`  报告类型: ${plan.reportType}`);
+
+    return plan;
+  }
+
+  /**
+   * 分析用户意图
+   */
+  private async analyzeIntent(query: string, hasConfig: boolean, sources: SourceConfig[]): Promise<string> {
+    const sourceList = hasConfig
+      ? sources.map(s => `- ${s.name} (${s.type})`).join('\n')
+      : '（无配置）';
+
+    const prompt = `
+分析以下用户查询的意图：
+
+用户查询: "${query}"
+
+用户配置的数据源:
+${sourceList}
+
+请分析：
+1. 用户想要什么类型的信息？（新闻、分析、数据、趋势等）
+2. 是否需要实时搜索？
+3. 用户期望的详细程度？
+4. 有什么特殊要求？
+
+输出简洁的分析报告（200字以内）。
+`;
+
+    return await this.callLLM(prompt);
+  }
+
+  /**
+   * 推断报告类型
+   */
+  private inferReportType(query: string, analysis: string): 'deep-research' | 'daily-brief' {
+    // 关键词匹配
+    const deepKeywords = ['深度', '分析', '研究', '洞察', '趋势', '详细', '全面', '报告', '分析报告'];
+    const briefKeywords = ['简报', '日报', '摘要', '快速', '简要', '汇总', '概览'];
+
+    const queryLower = query.toLowerCase();
+
+    // 检查深度关键词
+    if (deepKeywords.some(k => queryLower.includes(k))) {
+      return 'deep-research';
+    }
+
+    // 检查简报关键词
+    if (briefKeywords.some(k => queryLower.includes(k))) {
+      return 'daily-brief';
+    }
+
+    // 根据查询长度和复杂度推断
+    if (query.length > 50 || query.includes('？') || query.includes('?')) {
+      return 'deep-research';
+    }
+
+    // 根据分析结果推断
+    const analysisLower = analysis.toLowerCase();
+    if (analysisLower.includes('深度') || analysisLower.includes('详细') || analysisLower.includes('分析')) {
+      return 'deep-research';
+    }
+
+    // 默认简报
+    return 'daily-brief';
+  }
+
+  /**
+   * 生成计划
+   */
+  private generatePlan(
+    query: string,
+    hasConfig: boolean,
+    sources: SourceConfig[],
+    reportType: 'deep-research' | 'daily-brief' | 'formal'
+  ): Plan {
+    if (hasConfig) {
+      // 有配置：分析模式
+      return {
+        mode: 'analyze',
+        reportType,
+        dataSourceIds: sources.map(s => s.id),
+        analysisStrategy: {
+          scope: sources.map(s => s.name).join(', '),
+          angle: ['内容总结', '关键发现', '关联分析'],
+          focus: this.extractFocus(query)
+        },
+        reportFormat: this.getReportFormat(reportType)
+      };
+    } else {
+      // 无配置：搜索模式
+      return {
+        mode: 'search',
+        reportType,
+        searchStrategy: {
+          sources: ['wechat', 'knowledge', 'rss'],
+          keywords: this.extractKeywords(query),
+          depth: reportType === 'deep-research' ? 3 : 1,
+          timeRange: reportType === 'deep-research' ? '30d' : (reportType === 'formal' ? '7d' : '7d')
+        },
+        reportFormat: this.getReportFormat(reportType)
+      };
+    }
+  }
+
+  /**
+   * 提取关键词
+   */
+  private extractKeywords(query: string): string[] {
+    // 简单的关键词提取（可以用更复杂的 NLP）
+    const words = query
+      .replace(/[？?！!，。、；：]/g, ' ')
+      .split(/\s+/)
+      .filter(w => w.length > 1)
+      .slice(0, 5);
+
+    return words.length > 0 ? words : [query];
+  }
+
+  /**
+   * 提取关注重点
+   */
+  private extractFocus(query: string): string {
+    // 简化的重点提取
+    if (query.includes('最新') || query.includes('最近')) {
+      return '最新动态';
+    }
+    if (query.includes('趋势') || query.includes('发展')) {
+      return '发展趋势';
+    }
+    if (query.includes('对比') || query.includes('比较')) {
+      return '对比分析';
+    }
+    return query.slice(0, 50);
+  }
+
+  /**
+   * 获取报告格式
+   */
+  private getReportFormat(type: 'deep-research' | 'daily-brief' | 'formal'): Plan['reportFormat'] {
+    if (type === 'deep-research') {
+      return {
+        structure: [
+          '执行摘要',
+          '背景分析',
+          '核心发现',
+          '数据支持',
+          '趋势洞察',
+          '关联分析',
+          '结论与建议'
+        ],
+        includeLinks: true,
+        detailLevel: 'comprehensive'
+      };
+    } else if (type === 'formal') {
+      return {
+        structure: [
+          '核心摘要',
+          '关键要点',
+          '数据来源'
+        ],
+        includeLinks: true,
+        maxLength: 800,
+        detailLevel: 'structured'
+      };
+    } else {
+      return {
+        structure: [
+          '核心摘要',
+          '关键要点',
+          '数据来源'
+        ],
+        includeLinks: true,
+        maxLength: 500,
+        detailLevel: 'concise'
+      };
+    }
+  }
+}

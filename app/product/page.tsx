@@ -1,11 +1,13 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import NavBar from '@/components/NavBar';
 import TiltedCard from '@/components/TiltedCard';
 import Antigravity from '@/components/Antigravity';
-import { BookOpen, MessageCircle, Image, Plus, Sparkles, Bell, Database, Settings, Link, Loader2, Info, Trash2 } from 'lucide-react';
+import { BookOpen, MessageCircle, Image, Plus, Sparkles, Bell, Database, Settings, Link, Loader2, Info, Trash2, Send, X, ChevronDown, Search } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 
 // 工具数据接口
 interface Tool {
@@ -20,7 +22,336 @@ interface Tool {
     badgeCount?: number;
 }
 
+// 智能体搜索结果接口
+interface AgentResult {
+    success: boolean;
+    result?: {
+        items?: any[];
+        summary: string;
+        metadata?: Record<string, any>;
+    };
+    iterations?: number;
+    error?: string;
+    executionSteps?: ExecutionStep[]; // 执行流程
+}
+
+// 智能体搜索状态
+interface SearchState {
+    query: string;
+    isSearching: boolean;
+    result: AgentResult | null;
+    isExpanded: boolean;
+    reportType: 'daily-brief' | 'formal' | 'deep-research'; // daily-brief: 简报, formal: 正式, deep-research: 深度
+    hasNewResult: boolean; // 是否有新结果
+}
+
+// 执行流程步骤接口
+interface ExecutionStep {
+    id: string;
+    type: 'plan' | 'react' | 'review'; // plan: 规划, react: 执行, review: 审核
+    phase: string; // 阶段名称
+    iteration: number; // 迭代次数
+    timestamp: string; // 时间戳
+    status: 'running' | 'completed' | 'failed'; // 状态
+    content: {
+        action?: string; // 执行的动作（如"分析用户意图"）
+        decision?: string; // 决策（如"选择使用工具 X"）
+        toolCall?: { // 工具调用信息
+            toolName: string;
+            args: Record<string, any>;
+            result?: any;
+            error?: string;
+        };
+        reasoning?: string; // 推理过程
+        feedback?: string; // 反馈意见（review agent）
+        score?: number; // 评分
+    };
+}
+
 // 移除自定义SVG组件，改为使用 lucide-react
+
+// 搜索结果弹窗组件
+function SearchResultModal({ state, onClose, isOpen }: { state: SearchState; onClose: () => void; isOpen: boolean }) {
+    const resultRef = useRef<HTMLDivElement>(null);
+    const [activeTab, setActiveTab] = useState<'result' | 'execution'>('result'); // 标签页切换
+
+    useEffect(() => {
+        if (resultRef.current && isOpen) {
+            resultRef.current.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+    }, [state.result, isOpen]);
+
+    if (!isOpen) return null;
+
+    // 获取执行流程（如果没有则使用模拟数据）
+    const executionSteps = state.result?.executionSteps || [];
+
+    return (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 pt-24">
+            {/* 背景遮罩 */}
+            <div
+                className="absolute inset-0 bg-black/60 backdrop-blur-md animate-in fade-in duration-300"
+                onClick={onClose}
+            />
+
+            {/* 弹窗内容 */}
+            <div className="relative w-full max-w-4xl bg-[#0a0c10] border border-slate-700 rounded-3xl overflow-hidden shadow-2xl animate-in zoom-in slide-in-from-bottom-8 duration-300 max-h-[85vh] flex flex-col">
+                {/* 头部 */}
+                <div className="flex items-center justify-between px-6 py-4 border-b border-slate-800 flex-shrink-0">
+                    <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 bg-gradient-to-br from-purple-600 to-blue-600 rounded-xl flex items-center justify-center">
+                            <Search className="w-5 h-5 text-white" />
+                        </div>
+                        <div>
+                            <h3 className="text-lg font-bold text-white">智能体搜索结果</h3>
+                            <p className="text-xs text-slate-500">
+                                {state.reportType === 'deep-research' ? '深度研究报告' :
+                                    state.reportType === 'formal' ? '正式报告' :
+                                        '简要日报'} · {state.result?.iterations || 1} 次迭代
+                            </p>
+                        </div>
+                    </div>
+                    <button
+                        onClick={onClose}
+                        className="p-2 text-slate-500 hover:text-white hover:bg-slate-800 rounded-lg transition-all"
+                    >
+                        <X className="w-5 h-5" />
+                    </button>
+                </div>
+
+                {/* 标签页切换 */}
+                <div className="flex items-center gap-1 px-6 py-2 bg-slate-900/50 border-b border-slate-800 flex-shrink-0">
+                    <button
+                        onClick={() => setActiveTab('result')}
+                        className={`px-4 py-2 rounded-lg text-xs font-medium transition-all ${activeTab === 'result'
+                            ? 'bg-purple-600 text-white'
+                            : 'text-slate-400 hover:text-white hover:bg-slate-800'
+                            }`}
+                    >
+                        📄 报告
+                    </button>
+                    <button
+                        onClick={() => setActiveTab('execution')}
+                        className={`px-4 py-2 rounded-lg text-xs font-medium transition-all flex items-center gap-2 ${activeTab === 'execution'
+                            ? 'bg-purple-600 text-white'
+                            : 'text-slate-400 hover:text-white hover:bg-slate-800'
+                            }`}
+                    >
+                        ⚙️ 执行流程
+                        {executionSteps.length > 0 && (
+                            <span className="px-1.5 py-0.5 bg-white/20 rounded-full text-[10px]">
+                                {executionSteps.length}
+                            </span>
+                        )}
+                    </button>
+                </div>
+
+                {/* 内容区域 */}
+                <div className="p-6 overflow-y-auto flex-1">
+                    {activeTab === 'result' ? (
+                        // 报告内容
+                        state.isSearching ? (
+                            <div className="flex flex-col items-center justify-center py-16">
+                                <div className="relative">
+                                    <div className="w-16 h-16 border-4 border-slate-700 border-t-purple-500 rounded-full animate-spin" />
+                                    <div className="absolute inset-0 flex items-center justify-center">
+                                        <Sparkles className="w-6 h-6 text-purple-400 animate-pulse" />
+                                    </div>
+                                </div>
+                                <p className="mt-4 text-slate-400 text-sm">智能体正在分析中...</p>
+                                <p className="mt-2 text-slate-600 text-xs">Plan → ReAct → Review</p>
+                            </div>
+                        ) : state.result ? (
+                            <div className="space-y-4">
+                                {state.result.success && state.result.result ? (
+                                    <>
+                                        {/* 摘要 */}
+                                        <div className="bg-slate-800/50 rounded-2xl p-5">
+                                            <div className="flex items-center gap-2 mb-3">
+                                                <Sparkles className="w-4 h-4 text-purple-400" />
+                                                <h4 className="text-sm font-bold text-slate-400 uppercase tracking-wider">分析摘要</h4>
+                                            </div>
+                                            <div className="text-slate-200 text-sm leading-relaxed prose prose-invert prose-sm max-w-none prose-table:border prose-table:border-slate-700 prose-th:bg-slate-800/50 prose-th:border-b prose-th:border-slate-700 prose-td:border-b prose-td:border-slate-800 prose-td:py-2 prose-td:px-3">
+                                                <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                                                    {(() => {
+                                                        const summary = state.result.result.summary;
+                                                        try {
+                                                            // 尝试解析 JSON 字符串，提取 answer 字段
+                                                            const parsed = JSON.parse(summary);
+                                                            return parsed.answer || summary;
+                                                        } catch {
+                                                            // 如果不是 JSON，直接使用原字符串
+                                                            return summary;
+                                                        }
+                                                    })()}
+                                                </ReactMarkdown>
+                                            </div>
+                                        </div>
+
+                                        {/* 元数据 */}
+                                        {state.result.result.metadata && (
+                                            <div className="bg-slate-800/30 rounded-xl p-4">
+                                                <div className="flex flex-wrap gap-2 text-xs">
+                                                    {Object.entries(state.result.result.metadata).map(([key, value]) => (
+                                                        <span key={key} className="px-2 py-1 bg-slate-800 rounded-md text-slate-500">
+                                                            <span className="text-slate-600">{key}:</span> {String(value)}
+                                                        </span>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        )}
+                                    </>
+                                ) : (
+                                    <div className="flex flex-col items-center justify-center py-12">
+                                        <div className="w-12 h-12 bg-red-500/10 rounded-full flex items-center justify-center mb-3">
+                                            <X className="w-6 h-6 text-red-400" />
+                                        </div>
+                                        <p className="text-red-400 font-medium">搜索失败</p>
+                                        <p className="text-slate-500 text-sm mt-1">{state.result.error || '未知错误'}</p>
+                                    </div>
+                                )}
+                            </div>
+                        ) : null
+                    ) : activeTab === 'execution' ? (
+                        // 执行流程内容
+                        executionSteps.length > 0 ? (
+                            <div className="space-y-3">
+                                {executionSteps.map((step, idx) => (
+                                    <div
+                                        key={step.id}
+                                        className={`relative pl-8 pb-4 border-l-2 ${step.type === 'plan'
+                                            ? 'border-blue-500'
+                                            : step.type === 'react'
+                                                ? 'border-purple-500'
+                                                : 'border-green-500'
+                                            }`}
+                                    >
+                                        {/* 步骤图标 */}
+                                        <div
+                                            className={`absolute left-0 top-0 w-6 h-6 -translate-x-[13px] rounded-full flex items-center justify-center ${step.type === 'plan'
+                                                ? 'bg-blue-500'
+                                                : step.type === 'react'
+                                                    ? 'bg-purple-500'
+                                                    : 'bg-green-500'
+                                                } ${step.status === 'running' ? 'animate-pulse' : ''}`}
+                                        >
+                                            {step.type === 'plan' ? (
+                                                <span className="text-white text-xs">📋</span>
+                                            ) : step.type === 'react' ? (
+                                                <span className="text-white text-xs">⚙️</span>
+                                            ) : (
+                                                <span className="text-white text-xs">✓</span>
+                                            )}
+                                        </div>
+
+                                        {/* 步骤内容 */}
+                                        <div className="bg-slate-800/50 rounded-xl p-4">
+                                            <div className="flex items-center justify-between mb-2">
+                                                <div className="flex items-center gap-2">
+                                                    <span className={`text-xs font-bold uppercase px-2 py-0.5 rounded-full ${step.type === 'plan'
+                                                        ? 'bg-blue-500/20 text-blue-400'
+                                                        : step.type === 'react'
+                                                            ? 'bg-purple-500/20 text-purple-400'
+                                                            : 'bg-green-500/20 text-green-400'
+                                                        }`}>
+                                                        {step.type === 'plan' ? 'Plan Agent' : step.type === 'react' ? 'ReAct Agent' : 'Review Agent'}
+                                                    </span>
+                                                    <span className="text-xs text-slate-500">{step.phase}</span>
+                                                </div>
+                                                <span className={`text-xs px-2 py-0.5 rounded ${step.status === 'completed'
+                                                    ? 'bg-green-500/20 text-green-400'
+                                                    : step.status === 'failed'
+                                                        ? 'bg-red-500/20 text-red-400'
+                                                        : 'bg-yellow-500/20 text-yellow-400'
+                                                    }`}>
+                                                    {step.status === 'completed' ? '完成' : step.status === 'failed' ? '失败' : '进行中'}
+                                                </span>
+                                            </div>
+
+                                            {/* 行动/决策 */}
+                                            {step.content.action && (
+                                                <p className="text-sm text-slate-300 mb-2">
+                                                    <span className="text-slate-500">行动：</span>{step.content.action}
+                                                </p>
+                                            )}
+                                            {step.content.decision && (
+                                                <p className="text-sm text-slate-300 mb-2">
+                                                    <span className="text-slate-500">决策：</span>{step.content.decision}
+                                                </p>
+                                            )}
+
+                                            {/* 工具调用 */}
+                                            {step.content.toolCall && (
+                                                <div className="bg-slate-900/50 rounded-lg p-3 mt-2">
+                                                    <div className="flex items-center gap-2 mb-1">
+                                                        <span className="text-xs font-mono text-purple-400">{step.content.toolCall.toolName}</span>
+                                                        <span className="text-xs text-slate-500">→</span>
+                                                        {step.content.toolCall.error ? (
+                                                            <span className="text-xs text-red-400">{step.content.toolCall.error}</span>
+                                                        ) : (
+                                                            <span className="text-xs text-green-400">成功</span>
+                                                        )}
+                                                    </div>
+                                                    {step.content.toolCall.args && Object.keys(step.content.toolCall.args).length > 0 && (
+                                                        <pre className="text-xs text-slate-500 overflow-x-auto">
+                                                            {JSON.stringify(step.content.toolCall.args, null, 2)}
+                                                        </pre>
+                                                    )}
+                                                </div>
+                                            )}
+
+                                            {/* 推理过程 */}
+                                            {step.content.reasoning && (
+                                                <p className="text-xs text-slate-500 mt-2 italic">
+                                                    "{step.content.reasoning.slice(0, 150)}{step.content.reasoning.length > 150 ? '...' : ''}"
+                                                </p>
+                                            )}
+
+                                            {/* 反馈 */}
+                                            {step.content.feedback && (
+                                                <div className="bg-green-500/10 border border-green-500/20 rounded-lg p-3 mt-2">
+                                                    <p className="text-xs text-green-400 font-medium mb-1">审核反馈</p>
+                                                    <p className="text-xs text-slate-400">{step.content.feedback.slice(0, 200)}{step.content.feedback.length > 200 ? '...' : ''}</p>
+                                                    {step.content.score !== undefined && (
+                                                        <div className="mt-2 flex items-center gap-2">
+                                                            <div className="flex-1 h-1.5 bg-slate-700 rounded-full overflow-hidden">
+                                                                <div
+                                                                    className={`h-full ${step.content.score >= 80
+                                                                        ? 'bg-green-500'
+                                                                        : step.content.score >= 60
+                                                                            ? 'bg-yellow-500'
+                                                                            : 'bg-red-500'
+                                                                        }`}
+                                                                    style={{ width: `${step.content.score}%` }}
+                                                                />
+                                                            </div>
+                                                            <span className="text-xs text-slate-400">{step.content.score}/100</span>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            )}
+
+                                            {/* 时间戳 */}
+                                            <p className="text-[10px] text-slate-600 mt-2">{step.timestamp}</p>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        ) : (
+                            <div className="flex flex-col items-center justify-center py-16">
+                                <div className="w-16 h-16 bg-slate-800 rounded-full flex items-center justify-center mb-4">
+                                    <Settings className="w-8 h-8 text-slate-600" />
+                                </div>
+                                <p className="text-slate-500 text-sm">暂无执行流程数据</p>
+                                <p className="text-slate-600 text-xs mt-1">后端 API 需要返回执行步骤信息</p>
+                            </div>
+                        )
+                    ) : null}
+                </div>
+            </div>
+        </div>
+    );
+}
 
 // 工具卡片组件
 function ToolCard({ tool, onToggle, onDelete }: { tool: Tool; onToggle: (id: string) => void; onDelete: (id: string) => void }) {
@@ -160,7 +491,7 @@ function AddToolModal({ isOpen, onClose, onAdd }: { isOpen: boolean; onClose: ()
     };
 
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 text-slate-200">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 pt-24 text-slate-200">
             {/* 背景遮罩 */}
             <div
                 className="absolute inset-0 bg-black/60 backdrop-blur-md animate-in fade-in duration-300"
@@ -168,7 +499,7 @@ function AddToolModal({ isOpen, onClose, onAdd }: { isOpen: boolean; onClose: ()
             />
 
             {/* 弹窗内容 */}
-            <div className="relative w-full max-w-2xl bg-[#0a0c10] border border-slate-800 rounded-[32px] overflow-hidden shadow-2xl animate-in zoom-in slide-in-from-bottom-8 duration-300">
+            <div className="relative w-full max-w-2xl max-h-[85vh] bg-[#0a0c10] border border-slate-800 rounded-[32px] overflow-hidden shadow-2xl animate-in zoom-in slide-in-from-bottom-8 duration-300 flex flex-col">
                 {/* 头部 */}
                 <div className="flex items-center justify-between px-8 py-6 border-b border-slate-800/50">
                     <div className="flex items-center gap-3">
@@ -182,7 +513,7 @@ function AddToolModal({ isOpen, onClose, onAdd }: { isOpen: boolean; onClose: ()
                     </button>
                 </div>
 
-                <div className="p-8 space-y-8">
+                <div className="p-8 space-y-8 overflow-y-auto flex-1">
                     {/* 取个名字 */}
                     <div className="space-y-4">
                         <label className="block text-sm font-bold text-slate-400 uppercase tracking-widest ml-1">取个名字</label>
@@ -286,8 +617,83 @@ function AddToolModal({ isOpen, onClose, onAdd }: { isOpen: boolean; onClose: ()
 }
 
 export default function ProductPage() {
-    // 弹窗状态
+    // ========== 智能体搜索状态 ==========
+    const [searchState, setSearchState] = useState<SearchState>({
+        query: '',
+        isSearching: false,
+        result: null,
+        isExpanded: false,
+        reportType: 'daily-brief', // 默认简报
+        hasNewResult: false
+    });
+
+    // ========== 搜索结果弹窗状态 ==========
+    const [isSearchResultOpen, setIsSearchResultOpen] = useState(false);
+
+    // ========== 弹窗状态 ==========
     const [isModalOpen, setIsModalOpen] = useState(false);
+
+    // ========== 智能体搜索功能 ==========
+    const handleSearch = async () => {
+        if (!searchState.query.trim()) return;
+
+        setSearchState(prev => ({ ...prev, isSearching: true, isExpanded: true, result: null }));
+
+        try {
+            const response = await fetch('/api/agent/search', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    query: searchState.query,
+                    userId: 'demo-user', // 可以从 auth 获取
+                    mode: 'full',
+                    reportType: searchState.reportType
+                })
+            });
+
+            const data = await response.json();
+            setSearchState(prev => ({
+                ...prev,
+                isSearching: false,
+                result: data,
+                hasNewResult: true,
+                query: '' // 清空搜索框
+            }));
+            // 自动打开搜索结果弹窗
+            setIsSearchResultOpen(true);
+        } catch (error: any) {
+            setSearchState(prev => ({
+                ...prev,
+                isSearching: false,
+                result: { success: false, error: error.message },
+                hasNewResult: true,
+                query: '' // 清空搜索框
+            }));
+            // 自动打开搜索结果弹窗
+            setIsSearchResultOpen(true);
+        }
+    };
+
+    const handleKeyPress = (e: React.KeyboardEvent) => {
+        if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            handleSearch();
+        }
+    };
+
+    const closeSearchResult = () => {
+        setIsSearchResultOpen(false);
+        setSearchState(prev => ({ ...prev, hasNewResult: false }));
+    };
+
+    const toggleSearchResult = () => {
+        if (searchState.hasNewResult || searchState.result) {
+            setIsSearchResultOpen(!isSearchResultOpen);
+            if (isSearchResultOpen) {
+                setSearchState(prev => ({ ...prev, hasNewResult: false }));
+            }
+        }
+    };
     // 工具列表数据
     const [tools, setTools] = useState<Tool[]>([
         {
@@ -419,28 +825,84 @@ export default function ProductPage() {
             <main className="relative z-10 pt-32 px-8 pb-16 max-w-7xl mx-auto">
                 {/* 搜索输入框 */}
                 <div className="flex items-center justify-center gap-4 mb-12">
-                    <div className="relative group flex items-center w-full max-w-2xl">
+                    <div className="relative group flex items-center w-full max-w-3xl">
                         {/* 输入框光晕背景 */}
-                        <div className="absolute -inset-1 bg-gradient-to-r from-purple-600 to-blue-600 rounded-full blur opacity-60 group-hover:opacity-100 transition duration-500" />
+                        <div className={`absolute -inset-1 bg-gradient-to-r from-purple-600 to-blue-600 rounded-full blur transition duration-500 ${searchState.query ? 'opacity-100' : 'opacity-60 group-hover:opacity-100'}`} />
 
                         <div className="relative w-full">
                             <div className="absolute left-4 top-1/2 -translate-y-1/2 text-purple-400 z-10">
-                                <Sparkles className="w-5 h-5" />
+                                {searchState.isSearching ? (
+                                    <Loader2 className="w-5 h-5 animate-spin" />
+                                ) : (
+                                    <Search className="w-5 h-5" />
+                                )}
                             </div>
                             <input
                                 type="text"
-                                placeholder="Ask Micro anything..."
-                                className="w-full relative bg-slate-900 border border-slate-700 rounded-full py-4 pl-12 pr-24 text-white placeholder-slate-500 focus:outline-none focus:border-transparent transition-all"
+                                value={searchState.query}
+                                onChange={(e) => setSearchState(prev => ({ ...prev, query: e.target.value }))}
+                                onKeyPress={handleKeyPress}
+                                placeholder="Ask Micro anything... (试试: AI 最新动态 / Python 特性 / 前端框架对比)"
+                                className="w-full relative bg-slate-900 border border-slate-700 rounded-full py-4 pl-12 pr-32 text-white placeholder-slate-500 focus:outline-none focus:border-purple-500 transition-all"
                             />
-                            <button className="absolute right-2 top-1/2 -translate-y-1/2 px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-full hover:bg-blue-500 transition-colors z-10">
-                                Enter
-                            </button>
+                            <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-2 z-10">
+                                {/* 报告类型切换 */}
+                                <button
+                                    onClick={() => {
+                                        const types: Array<'daily-brief' | 'formal' | 'deep-research'> = ['daily-brief', 'formal', 'deep-research'];
+                                        const currentIndex = types.indexOf(searchState.reportType);
+                                        const nextIndex = (currentIndex + 1) % types.length;
+                                        setSearchState(prev => ({ ...prev, reportType: types[nextIndex] }));
+                                    }}
+                                    className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all ${searchState.reportType === 'deep-research'
+                                        ? 'bg-purple-600 text-white'
+                                        : searchState.reportType === 'formal'
+                                            ? 'bg-blue-600 text-white'
+                                            : 'bg-slate-700 text-slate-400 hover:bg-slate-600'
+                                        }`}
+                                    title={
+                                        searchState.reportType === 'deep-research' ? '深度研究报告 (3轮搜索)' :
+                                            searchState.reportType === 'formal' ? '正式报告 (结构化输出)' :
+                                                '简要日报 (快速摘要)'
+                                    }
+                                >
+                                    {searchState.reportType === 'deep-research' ? '深度' :
+                                        searchState.reportType === 'formal' ? '正式' :
+                                            '简报'}
+                                </button>
+                                <button
+                                    onClick={handleSearch}
+                                    disabled={!searchState.query.trim() || searchState.isSearching}
+                                    className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-full hover:bg-blue-500 disabled:bg-slate-700 disabled:text-slate-500 transition-colors flex items-center gap-1.5"
+                                >
+                                    <Send className="w-4 h-4" />
+                                    搜索
+                                </button>
+                            </div>
                         </div>
                     </div>
-                    <button className="p-3 bg-slate-800/60 border border-slate-700/50 rounded-full text-gray-400 hover:text-white hover:border-slate-600 transition-all">
+                    <button
+                        onClick={toggleSearchResult}
+                        className="relative p-3 bg-slate-800/60 border border-slate-700/50 rounded-full text-gray-400 hover:text-white hover:border-slate-600 transition-all"
+                    >
                         <Bell className="w-5 h-5" />
+                        {/* 搜索进行中或有新结果时显示标记 */}
+                        {(searchState.isSearching || searchState.hasNewResult) && (
+                            <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] bg-red-500 rounded-full border-2 border-slate-900 flex items-center justify-center">
+                                <span className="text-white text-[10px] font-bold leading-none">
+                                    {searchState.isSearching ? '1' : ''}
+                                </span>
+                            </span>
+                        )}
                     </button>
                 </div>
+
+                {/* 搜索结果弹窗 */}
+                <SearchResultModal
+                    state={searchState}
+                    onClose={closeSearchResult}
+                    isOpen={isSearchResultOpen}
+                />
 
                 {/* Available Tools 标题 */}
                 <div className="flex items-center justify-between mb-6">
